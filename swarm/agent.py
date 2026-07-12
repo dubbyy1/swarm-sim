@@ -8,9 +8,10 @@ from .types import Formation, State, Intent
 from .components import IREmitter, IRReceiver, UWBAntenna, Radio
 
 class Agent:
-    def __init__(self, id, network):
+    def __init__(self, id, network, screen):
         self.id = id
         self.network = network
+        self.screen = screen
 
         self.pose = Pose(0, 0, 0)
         self.radius = 20
@@ -38,7 +39,7 @@ class Agent:
 
         self.initialized = False
         self.leader = False
-        self.formation_controller = FormationController(self)
+        self.formation_controller = FormationController(self, screen)
         self.formation = Formation.LINE
         self.state = State.IDLE
 
@@ -461,12 +462,13 @@ class Agent:
                 if index < len(order) - 1:
                     neighbours.append(order[index + 1])
 
+        self.formation_controller.order = tuple(order)
         self.formation_controller.neighbours = tuple(neighbours)
 
     def draw(self, screen):
         pygame.draw.circle(screen, "#000000", (int(self.pose.x), int(self.pose.y)), self.radius, 2)
 
-        if self.id == 1:
+        if self.id == -1:
             pygame.draw.circle(screen, "#ff00ff", (int(self.pose.x), int(self.pose.y)), self.radius, 2)
             ln = self.get_live_neighbours()
             for agent_id, entry in self.map.items():
@@ -488,10 +490,13 @@ class Agent:
         # self.radio.draw(screen)
 
 class FormationController:
-    def __init__(self, agent):
+    def __init__(self, agent, screen):
         self.agent = agent
+        self.screen = screen
         self.neighbours = tuple()
+        self.order = tuple()
         self.min_neighbour_distance = self.agent.radius * 5
+        self.collision_avoidance_strength = 1.0
 
     def get_formation_velocity(self):
         movement_neighbours = self.neighbours
@@ -527,6 +532,10 @@ class FormationController:
             if len(neighbour_positions) == 1:
                 return neighbour_positions[0]
 
+            circle_size = len(self.order)
+            if circle_size < 3:
+                return get_line_position()
+
             a = neighbour_positions[0]
             b = neighbour_positions[1]
             dx = b.x - a.x
@@ -539,12 +548,10 @@ class FormationController:
             midpoint_x = (a.x + b.x) / 2
             midpoint_y = (a.y + b.y) / 2
             spacing = self.min_neighbour_distance
-            half_chord = chord / 2
-
-            if half_chord >= spacing:
-                return Pose(midpoint_x, midpoint_y, 0)
-
-            height = math.sqrt(spacing * spacing - half_chord * half_chord)
+            radius = spacing / (2 * math.sin(math.pi / circle_size))
+            expected_chord = 2 * radius * math.sin(2 * math.pi / circle_size)
+            expected_half_chord = expected_chord / 2
+            height = math.sqrt(max(0, spacing * spacing - expected_half_chord * expected_half_chord))
             perpendicular_x = -dy / chord
             perpendicular_y = dx / chord
             candidates = [
@@ -560,7 +567,21 @@ class FormationController:
                 )
             ]
 
-            return min(candidates, key=lambda pose: math.hypot(pose.x, pose.y))
+            sum_x = 0
+            sum_y = 0
+
+            for neighbour_id in self.agent.get_live_neighbours():
+                if neighbour_id not in self.agent.map:
+                    continue
+
+                neighbour_pose = self.agent.map[neighbour_id]["pose"]
+                sum_x += neighbour_pose.x
+                sum_y += neighbour_pose.y
+
+            return max(
+                candidates,
+                key=lambda pose: math.hypot(pose.x - sum_x, pose.y - sum_y)
+            )
 
         def get_excluded_position():
             nonlocal movement_neighbours
@@ -590,6 +611,8 @@ class FormationController:
         if target is None:
             return [0, 0]
 
+        global_target = Pose(target.x, target.y, target.theta) + self.agent.pose
+        pygame.draw.circle(self.screen, "#ff00ff", (int(global_target.x), int(global_target.y)), 3)
         target_distance = math.hypot(target.x, target.y)
         if target_distance == 0:
             velocity = [0, 0]
@@ -612,11 +635,84 @@ class FormationController:
             if distance == 0 or distance >= self.min_neighbour_distance:
                 continue
 
-            push = min(self.agent.speed, self.min_neighbour_distance - distance)
+            push = min(
+                self.agent.speed,
+                (self.min_neighbour_distance - distance) * self.collision_avoidance_strength
+            )
             velocity[0] -= neighbour_pose.x / distance * push
             velocity[1] -= neighbour_pose.y / distance * push
 
         return velocity
+
+    def get_cycle_distance(self, network: nx.Graph, cycle):
+        if len(cycle) < 2:
+            return 0
+
+        return self.get_path_distance(network, cycle) + network[cycle[-1]][cycle[0]].get("distance", 1)
+    def normalize_cycle_direction(self, cycle):
+        if not cycle:
+            return []
+
+        rotations = []
+        directions = [list(cycle), list(reversed(cycle))]
+
+        for direction in directions:
+            for index in range(len(direction)):
+                rotations.append(direction[index:] + direction[:index])
+
+        return min(rotations)
+    def get_best_cycle(self, network: nx.Graph):
+        best_cycle = []
+        best_distance = 0
+        seen_cycles = set()
+        components = sorted(nx.connected_components(network), key=len, reverse=True)
+
+        for component_nodes in components:
+            component = network.subgraph(component_nodes)
+            if component.number_of_nodes() < 3:
+                continue
+
+            for start in sorted(component.nodes):
+                stack = [(start, [start])]
+
+                while stack:
+                    node, path = stack.pop()
+
+                    for neighbour in sorted(component.neighbors(node), reverse=True):
+                        if neighbour == start and len(path) >= 3:
+                            normalized_cycle = self.normalize_cycle_direction(path)
+                            cycle_key = tuple(normalized_cycle)
+
+                            if cycle_key in seen_cycles:
+                                continue
+
+                            seen_cycles.add(cycle_key)
+                            cycle_distance = self.get_cycle_distance(component, normalized_cycle)
+
+                            if (
+                                len(normalized_cycle) > len(best_cycle)
+                                or (
+                                    len(normalized_cycle) == len(best_cycle)
+                                    and (
+                                        cycle_distance < best_distance
+                                        or (
+                                            cycle_distance == best_distance
+                                            and normalized_cycle < self.normalize_cycle_direction(best_cycle)
+                                        )
+                                    )
+                                )
+                            ):
+                                best_cycle = normalized_cycle
+                                best_distance = cycle_distance
+
+                            continue
+
+                        if neighbour in path:
+                            continue
+
+                        stack.append((neighbour, path + [neighbour]))
+
+        return best_cycle
 
     def get_path_distance(self, network: nx.Graph, path):
         distance = 0
@@ -625,12 +721,10 @@ class FormationController:
             distance += network[a][b].get("distance", 1)
 
         return distance
-
     def normalize_path_direction(self, path):
         reversed_path = list(reversed(path))
         return min(path, reversed_path)
-
-    def get_longest_simple_path(self, network: nx.Graph):
+    def get_best_path(self, network: nx.Graph):
         best_path = []
         best_distance = 0
 
@@ -674,9 +768,9 @@ class FormationController:
     def get_formation_order(self, network:nx.Graph, formation:Formation):
         match formation:
             case Formation.LINE:
-                return self.get_longest_simple_path(network)
+                return self.get_best_path(network)
             case Formation.CIRCLE:
-                return self.get_longest_simple_path(network)
+                return self.get_best_cycle(network)
             case _:
                 pass
         return []

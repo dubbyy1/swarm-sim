@@ -22,7 +22,8 @@ class World:
         for i in range(size):
             agent = Agent(
                 id=len(self.agents),
-                network=self.network
+                network=self.network,
+                screen=self.screen,
             )
             if x is not None and y is not None:
                 agent.set_pose(Pose(x, y, 0))
