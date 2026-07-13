@@ -497,6 +497,7 @@ class FormationController:
         self.order = tuple()
         self.min_neighbour_distance = self.agent.radius * 5
         self.collision_avoidance_strength = 1.0
+        self.endpoint_separation_strength = 0.5
 
     def get_formation_velocity(self):
         movement_neighbours = self.neighbours
@@ -625,7 +626,42 @@ class FormationController:
                 target.y / target_distance * speed
             ]
 
-        for neighbour_id in self.agent.get_live_neighbours():
+        live_neighbours = self.agent.get_live_neighbours()
+
+        if (
+            self.agent.formation == Formation.LINE
+            and len(self.order) > 2
+            and self.agent.id in (self.order[0], self.order[-1])
+        ):
+            endpoint_index = 0 if self.agent.id == self.order[0] else len(self.order) - 1
+            direct_neighbours = set(self.neighbours)
+
+            for neighbour_id in live_neighbours:
+                if neighbour_id in direct_neighbours or neighbour_id not in self.agent.map:
+                    continue
+
+                neighbour_pose = self.agent.map[neighbour_id]["pose"]
+                distance = math.hypot(neighbour_pose.x, neighbour_pose.y)
+                if distance == 0:
+                    continue
+
+                if neighbour_id in self.order:
+                    neighbour_index = self.order.index(neighbour_id)
+                    desired_distance = self.min_neighbour_distance * abs(neighbour_index - endpoint_index)
+                else:
+                    desired_distance = self.min_neighbour_distance
+
+                if distance >= desired_distance:
+                    continue
+
+                push = min(
+                    self.agent.speed,
+                    (desired_distance - distance) * self.endpoint_separation_strength
+                )
+                velocity[0] -= neighbour_pose.x / distance * push
+                velocity[1] -= neighbour_pose.y / distance * push
+
+        for neighbour_id in live_neighbours:
             if neighbour_id not in self.agent.map:
                 continue
 
@@ -651,28 +687,52 @@ class FormationController:
             for node, neighbours in dict_network.items()
         }
 
-        def get_path_length(path):
-            distances = [simple_net[path[i]][path[i+1]] for i in range(len(path)-1)]
+        def get_cycle_length(cycle:list[int]):
+            distances = [
+                simple_net[cycle[i]][cycle[i + 1]]
+                for i in range(len(cycle) - 1)
+            ]
+            distances.append(simple_net[cycle[-1]][cycle[0]])
             return sum(distances)
 
-        paths = []
+        cycles:list[list[int]] = []
         longest = 0
-        for node in simple_net.keys():
-            path = [node]
-            neighbours = [n for n in simple_net[node].keys() if n not in path]
 
-            while neighbours != []:
-                next_node = min(neighbours, key=lambda x: simple_net[path[-1]].get(x, 0))
+        for start in simple_net.keys():
+            path = [start]
+            visited = {start}
+
+            while True:
+                current = path[-1]
+                neighbours = [
+                    neighbour
+                    for neighbour in simple_net[current].keys()
+                    if neighbour not in visited
+                ]
+
+                if neighbours == []:
+                    break
+
+                next_node = min(
+                    neighbours,
+                    key=lambda neighbour: simple_net[current][neighbour]
+                )
                 path.append(next_node)
-                neighbours = [n for n in simple_net[next_node].keys() if n not in path]
-            paths.append(path)
-            longest = max(longest, len(path))
+                visited.add(next_node)
 
-        paths = list(filter(lambda x: len(x) == longest, paths))
-        paths.sort(key=get_path_length)
-        print(paths[0], "yo")
+                if len(path) >= 3 and start in simple_net[path[-1]]:
+                    cycle = path.copy()
+                    cycles.append(cycle)
+                    longest = max(longest, len(cycle))
 
-        return paths[0]
+        cycles = [cycle for cycle in cycles if len(cycle) == longest]
+        if not cycles:
+            return []
+
+        cycles.sort(key=get_cycle_length)
+        print(cycles[0], "yo")
+
+        return cycles[0]
 
     def get_best_path(self, network: nx.Graph):
         dict_network:dict[int,dict[int,dict[str,float]]] = nx.to_dict_of_dicts(network)
