@@ -348,7 +348,7 @@ class Agent:
             if agent_id == self.id:
                 continue
 
-            last_seen = max(entry["ir_timestamp"], entry["uwb_timestamp"])
+            last_seen = entry["ir_timestamp"]
             if now - last_seen < max_age:
                 neighbours.append(agent_id)
 
@@ -644,126 +644,65 @@ class FormationController:
 
         return velocity
 
-    def get_cycle_distance(self, network: nx.Graph, cycle):
-        if len(cycle) < 2:
-            return 0
-
-        return self.get_path_distance(network, cycle) + network[cycle[-1]][cycle[0]].get("distance", 1)
-    def normalize_cycle_direction(self, cycle):
-        if not cycle:
-            return []
-
-        rotations = []
-        directions = [list(cycle), list(reversed(cycle))]
-
-        for direction in directions:
-            for index in range(len(direction)):
-                rotations.append(direction[index:] + direction[:index])
-
-        return min(rotations)
     def get_best_cycle(self, network: nx.Graph):
-        best_cycle = []
-        best_distance = 0
-        seen_cycles = set()
-        components = sorted(nx.connected_components(network), key=len, reverse=True)
+        dict_network:dict[int,dict[int,dict[str,float]]] = nx.to_dict_of_dicts(network)
+        simple_net:dict[int,dict[int,float]] = {
+            node: {neighbour:data.get("distance", 0) for neighbour, data in neighbours.items()}
+            for node, neighbours in dict_network.items()
+        }
 
-        for component_nodes in components:
-            component = network.subgraph(component_nodes)
-            if component.number_of_nodes() < 3:
-                continue
+        def get_path_length(path):
+            distances = [simple_net[path[i]][path[i+1]] for i in range(len(path)-1)]
+            return sum(distances)
 
-            for start in sorted(component.nodes):
-                stack = [(start, [start])]
+        paths = []
+        longest = 0
+        for node in simple_net.keys():
+            path = [node]
+            neighbours = [n for n in simple_net[node].keys() if n not in path]
 
-                while stack:
-                    node, path = stack.pop()
+            while neighbours != []:
+                next_node = min(neighbours, key=lambda x: simple_net[path[-1]].get(x, 0))
+                path.append(next_node)
+                neighbours = [n for n in simple_net[next_node].keys() if n not in path]
+            paths.append(path)
+            longest = max(longest, len(path))
 
-                    for neighbour in sorted(component.neighbors(node), reverse=True):
-                        if neighbour == start and len(path) >= 3:
-                            normalized_cycle = self.normalize_cycle_direction(path)
-                            cycle_key = tuple(normalized_cycle)
+        paths = list(filter(lambda x: len(x) == longest, paths))
+        paths.sort(key=get_path_length)
+        print(paths[0], "yo")
 
-                            if cycle_key in seen_cycles:
-                                continue
+        return paths[0]
 
-                            seen_cycles.add(cycle_key)
-                            cycle_distance = self.get_cycle_distance(component, normalized_cycle)
-
-                            if (
-                                len(normalized_cycle) > len(best_cycle)
-                                or (
-                                    len(normalized_cycle) == len(best_cycle)
-                                    and (
-                                        cycle_distance < best_distance
-                                        or (
-                                            cycle_distance == best_distance
-                                            and normalized_cycle < self.normalize_cycle_direction(best_cycle)
-                                        )
-                                    )
-                                )
-                            ):
-                                best_cycle = normalized_cycle
-                                best_distance = cycle_distance
-
-                            continue
-
-                        if neighbour in path:
-                            continue
-
-                        stack.append((neighbour, path + [neighbour]))
-
-        return best_cycle
-
-    def get_path_distance(self, network: nx.Graph, path):
-        distance = 0
-
-        for a, b in zip(path, path[1:]):
-            distance += network[a][b].get("distance", 1)
-
-        return distance
-    def normalize_path_direction(self, path):
-        reversed_path = list(reversed(path))
-        return min(path, reversed_path)
     def get_best_path(self, network: nx.Graph):
-        best_path = []
-        best_distance = 0
+        dict_network:dict[int,dict[int,dict[str,float]]] = nx.to_dict_of_dicts(network)
+        simple_net:dict[int,dict[int,float]] = {
+            node: {neighbour:data.get("distance", 0) for neighbour, data in neighbours.items()}
+            for node, neighbours in dict_network.items()
+        }
 
-        components = sorted(nx.connected_components(network), key=len, reverse=True)
+        def get_path_length(path):
+            distances = [simple_net[path[i]][path[i+1]] for i in range(len(path)-1)]
+            return sum(distances)
 
-        for component_nodes in components:
-            component = network.subgraph(component_nodes)
+        paths = []
+        longest = 0
+        for node in simple_net.keys():
+            path = [node]
+            neighbours = [n for n in simple_net[node].keys() if n not in path]
 
-            for start in sorted(component.nodes):
-                stack = [(start, [start])]
+            while neighbours != []:
+                next_node = min(neighbours, key=lambda x: simple_net[path[-1]].get(x, 0))
+                path.append(next_node)
+                neighbours = [n for n in simple_net[next_node].keys() if n not in path]
+            paths.append(path)
+            longest = max(longest, len(path))
 
-                while stack:
-                    node, path = stack.pop()
-                    normalized_path = self.normalize_path_direction(path)
-                    path_distance = self.get_path_distance(component, path)
+        paths = list(filter(lambda x: len(x) == longest, paths))
+        paths.sort(key=get_path_length)
+        print(paths[0], "yo")
 
-                    if (
-                        len(path) > len(best_path)
-                        or (
-                            len(path) == len(best_path)
-                            and (
-                                path_distance < best_distance
-                                or (
-                                    path_distance == best_distance
-                                    and normalized_path < self.normalize_path_direction(best_path)
-                                )
-                            )
-                        )
-                    ):
-                        best_path = normalized_path
-                        best_distance = path_distance
-
-                    for neighbour in sorted(component.neighbors(node), reverse=True):
-                        if neighbour in path:
-                            continue
-
-                        stack.append((neighbour, path + [neighbour]))
-
-        return best_path
+        return paths[0]
 
     def get_formation_order(self, network:nx.Graph, formation:Formation):
         match formation:
