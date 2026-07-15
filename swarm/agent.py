@@ -100,6 +100,10 @@ class Agent:
             velocity = self.formation_controller.get_formation_velocity()
             desired_vx = velocity[0]
             desired_vy = velocity[1]
+        elif self.state == State.IDLE:
+            velocity = self.formation_controller.get_separation_velocity()
+            desired_vx = velocity[0]
+            desired_vy = velocity[1]
 
         self.drivetrain.set_desired_world_velocity(
             desired_vx,
@@ -515,6 +519,28 @@ class FormationController:
         self.min_neighbour_distance = self.agent.radius * 5
         self.collision_avoidance_strength = 1.0
         self.endpoint_separation_strength = 0.5
+
+    def get_separation_velocity(self):
+        velocity = [0, 0]
+
+        for neighbour_id in self.agent.get_live_neighbours():
+            if neighbour_id not in self.agent.map:
+                continue
+
+            neighbour_pose = self.agent.map[neighbour_id]["pose"]
+            distance = math.hypot(neighbour_pose.x, neighbour_pose.y)
+
+            if distance == 0 or distance >= self.min_neighbour_distance:
+                continue
+
+            push = min(
+                self.agent.speed,
+                (self.min_neighbour_distance - distance) * self.collision_avoidance_strength
+            )
+            velocity[0] -= neighbour_pose.x / distance * push
+            velocity[1] -= neighbour_pose.y / distance * push
+
+        return velocity
 
     def get_formation_velocity(self):
         movement_neighbours = self.neighbours
