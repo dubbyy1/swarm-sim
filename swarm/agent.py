@@ -5,7 +5,7 @@ import networkx as nx
 
 from .utils import Pose
 from .types import Formation, State, Intent
-from .components import IREmitter, IRReceiver, UWBAntenna, Radio
+from .components import IREmitter, IRReceiver, UWBAntenna, Radio, Drivetrain
 
 class Agent:
     def __init__(self, id, network, screen):
@@ -22,6 +22,7 @@ class Agent:
         self.receivers = self.spawn_receivers(16)
         self.antenna = UWBAntenna(self, self.network)
         self.radio = Radio(self, self.network)
+        self.drivetrain = Drivetrain(self)
 
         self.map: dict[int, dict] = {}
         self.local_network = nx.Graph()
@@ -91,10 +92,25 @@ class Agent:
         self.read_ir(delta)
         self.read_radio(delta)
 
+        desired_vx = 0
+        desired_vy = 0
+        desired_omega = 0
+
         if self.state in (State.IN_FORMATION, State.EXCLUDED):
             velocity = self.formation_controller.get_formation_velocity()
-            self.pose.x += velocity[0] * delta
-            self.pose.y += velocity[1] * delta
+            desired_vx = velocity[0]
+            desired_vy = velocity[1]
+
+        self.drivetrain.set_desired_world_velocity(
+            desired_vx,
+            desired_vy,
+            desired_omega
+        )
+        actual_vx, actual_vy, actual_omega = self.drivetrain.tick(delta)
+
+        self.pose.x += actual_vx * delta
+        self.pose.y += actual_vy * delta
+        self.pose.theta = (self.pose.theta + math.degrees(actual_omega) * delta) % 360
 
     def communicate(self):
         self.ping()
@@ -466,6 +482,7 @@ class Agent:
         self.formation_controller.neighbours = tuple(neighbours)
 
     def draw(self, screen):
+        self.drivetrain.draw(screen)
         pygame.draw.circle(screen, "#000000", (int(self.pose.x), int(self.pose.y)), self.radius, 2)
 
         if self.id == -1:

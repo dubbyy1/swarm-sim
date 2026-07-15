@@ -71,7 +71,7 @@ class World:
             agent_b = agents_by_id[b]
             pygame.draw.line(
                 screen,
-                "#00aa00",
+                "#00ff00",
                 (agent_a.pose.x, agent_a.pose.y),
                 (agent_b.pose.x, agent_b.pose.y),
                 1

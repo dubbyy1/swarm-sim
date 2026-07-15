@@ -22,7 +22,7 @@ def draw_elements(world, screen):
 
 def main(screen, font, clock):
     world = World(0, screen)
-    for i in range(5):
+    for i in range(6):
         world.spawn(1)
         world.tick(1)
 
@@ -44,11 +44,13 @@ def main(screen, font, clock):
         pygame.display.flip()
 
         frames += 1
-        if frames % 600 == 0:
-            if frames % 1200 == 0:
-                world.controller.set_formation(Formation.LINE)
-            else:
+        if frames == 60:
+            world.controller.set_formation(Formation.LINE)
+        if frames % 900 == 0:
+            if frames % 1800 == 0:
                 world.controller.set_formation(Formation.CIRCLE)
+            else:
+                world.controller.set_formation(Formation.LINE)
 
 if __name__ == "__main__":
     screen, font, clock = start()
