@@ -61,6 +61,19 @@ class Network:
         return 1 / (1 + distance / self.ir_intensity_dropoff)
 
     def signal_is_blocked(self, sender_pose, receiver_pose, sender_id, receiver_agent_id):
+        for wall in self.world.walls:
+            if self.segments_intersect(
+                sender_pose.x,
+                sender_pose.y,
+                receiver_pose.x,
+                receiver_pose.y,
+                wall[0],
+                wall[1],
+                wall[2],
+                wall[3]
+            ):
+                return True
+
         for agent in self.world.agents:
             if agent.id == sender_id:
                 continue
@@ -99,6 +112,34 @@ class Network:
         closest_y = y1 + t * dy
 
         return math.hypot(cx - closest_x, cy - closest_y) < radius
+
+    def segments_intersect(self, ax, ay, bx, by, cx, cy, dx, dy):
+        def orientation(px, py, qx, qy, rx, ry):
+            value = (qy - py) * (rx - qx) - (qx - px) * (ry - qy)
+            if abs(value) < 1e-9:
+                return 0
+            return 1 if value > 0 else 2
+
+        def on_segment(px, py, qx, qy, rx, ry):
+            return (
+                min(px, rx) <= qx <= max(px, rx)
+                and min(py, ry) <= qy <= max(py, ry)
+            )
+
+        o1 = orientation(ax, ay, bx, by, cx, cy)
+        o2 = orientation(ax, ay, bx, by, dx, dy)
+        o3 = orientation(cx, cy, dx, dy, ax, ay)
+        o4 = orientation(cx, cy, dx, dy, bx, by)
+
+        if o1 != o2 and o3 != o4:
+            return True
+
+        return (
+            (o1 == 0 and on_segment(ax, ay, cx, cy, bx, by))
+            or (o2 == 0 and on_segment(ax, ay, dx, dy, bx, by))
+            or (o3 == 0 and on_segment(cx, cy, ax, ay, dx, dy))
+            or (o4 == 0 and on_segment(cx, cy, bx, by, dx, dy))
+        )
 
     def get_angle_difference(self, a, b):
         return (a - b + 180) % 360 - 180

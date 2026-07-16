@@ -19,6 +19,9 @@ class World:
         self.default_size = size
         self.settings.reset_swarm_size = size
         self.selected_agent: Agent | None = None
+        self.walls: list[tuple[float, float, float, float]] = []
+        self.wall_mode_enabled = False
+        self.pending_wall_start: tuple[float, float] | None = None
         self.agents:list[Agent] = []
 
         self.spawn(size)
@@ -66,6 +69,30 @@ class World:
     def set_formation(self, formation:Formation):
         self.elect_global_leader()
         self.controller.set_formation(formation)
+
+    def toggle_wall_mode(self):
+        self.wall_mode_enabled = not self.wall_mode_enabled
+        self.pending_wall_start = None
+
+    def clear_walls(self):
+        self.walls = []
+        self.pending_wall_start = None
+
+    def handle_wall_click(self, position):
+        x, y = position
+
+        if self.pending_wall_start is None:
+            self.pending_wall_start = (float(x), float(y))
+            return
+
+        start_x, start_y = self.pending_wall_start
+        end_x = float(x)
+        end_y = float(y)
+
+        if start_x != end_x or start_y != end_y:
+            self.walls.append((start_x, start_y, end_x, end_y))
+
+        self.pending_wall_start = None
 
     def elect_global_leader(self):
         if not self.agents:
@@ -162,6 +189,54 @@ class World:
                     agent_b.pose.x += push_x
                     agent_b.pose.y += push_y
 
+            for agent in self.agents:
+                self.resolve_wall_collision(agent)
+
+    def resolve_wall_collision(self, agent):
+        for x1, y1, x2, y2 in self.walls:
+            closest_x, closest_y = self.get_closest_point_on_segment(
+                agent.pose.x,
+                agent.pose.y,
+                x1,
+                y1,
+                x2,
+                y2
+            )
+            dx = agent.pose.x - closest_x
+            dy = agent.pose.y - closest_y
+            distance = math.hypot(dx, dy)
+
+            if distance >= agent.radius:
+                continue
+
+            if distance == 0:
+                wall_dx = x2 - x1
+                wall_dy = y2 - y1
+                wall_length = math.hypot(wall_dx, wall_dy)
+                if wall_length == 0:
+                    dx = 1
+                    dy = 0
+                else:
+                    dx = -wall_dy / wall_length
+                    dy = wall_dx / wall_length
+                distance = 1
+
+            overlap = agent.radius - distance
+            agent.pose.x += dx / distance * overlap
+            agent.pose.y += dy / distance * overlap
+
+    def get_closest_point_on_segment(self, px, py, x1, y1, x2, y2):
+        dx = x2 - x1
+        dy = y2 - y1
+        length_squared = dx * dx + dy * dy
+
+        if length_squared == 0:
+            return x1, y1
+
+        t = ((px - x1) * dx + (py - y1) * dy) / length_squared
+        t = max(0, min(1, t))
+        return x1 + t * dx, y1 + t * dy
+
     def draw(self, screen):
         if self.settings.show_ir_range_circle and self.selected_agent is not None:
             pygame.draw.circle(
@@ -169,6 +244,24 @@ class World:
                 "#ff8800",
                 (int(self.selected_agent.pose.x), int(self.selected_agent.pose.y)),
                 int(self.settings.ir_max_range),
+                1
+            )
+
+        for wall in self.walls:
+            pygame.draw.line(
+                screen,
+                "#000000",
+                (wall[0], wall[1]),
+                (wall[2], wall[3]),
+                4
+            )
+
+        if self.pending_wall_start is not None:
+            pygame.draw.circle(
+                screen,
+                "#000000",
+                (int(self.pending_wall_start[0]), int(self.pending_wall_start[1])),
+                5,
                 1
             )
 

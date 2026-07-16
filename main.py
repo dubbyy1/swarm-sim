@@ -63,6 +63,32 @@ def create_remote_button(world):
     )
 
 
+def create_wall_buttons(world, screen):
+    width, height = screen.get_size()
+    button_width = 120
+    button_height = 34
+    x = width - button_width - 12
+
+    return [
+        ("wall", Button(
+            x,
+            height - 86,
+            button_width,
+            button_height,
+            "Wall",
+            world.toggle_wall_mode
+        )),
+        ("clear", Button(
+            x,
+            height - 46,
+            button_width,
+            button_height,
+            "Clear walls",
+            world.clear_walls
+        )),
+    ]
+
+
 def create_reset_button(world, screen):
     _, height = screen.get_size()
     return Button(
@@ -238,14 +264,13 @@ def draw_selected_robot_stats(world, screen, font):
         text_y += line.get_height()
 
 
-def draw_ui(world, screen, font, formation_buttons, remote_button, reset_button, reset_steppers, graphics_checkboxes, ir_sliders):
-    current = world.controller.formation.name
-    selected = "None" if world.selected_agent is None else str(world.selected_agent.id)
-
+def draw_ui(world, screen, font, formation_buttons, remote_button, wall_buttons, reset_button, reset_steppers, graphics_checkboxes, ir_sliders):
     for formation, button in formation_buttons:
         button.draw(screen, active=world.controller.formation == formation)
 
     remote_button.draw(screen, active=world.settings.remote_control_enabled)
+    for button_type, button in wall_buttons:
+        button.draw(screen, active=button_type == "wall" and world.wall_mode_enabled)
     reset_button.draw(screen)
     for stepper in reset_steppers:
         stepper.draw(screen)
@@ -268,6 +293,7 @@ def main(screen, font, clock):
 
     formation_buttons = create_formation_buttons(world)
     remote_button = create_remote_button(world)
+    wall_buttons = create_wall_buttons(world, screen)
     reset_button = create_reset_button(world, screen)
     reset_steppers = create_reset_steppers(world, screen)
     graphics_checkboxes = create_graphics_checkboxes(world)
@@ -298,6 +324,12 @@ def main(screen, font, clock):
                         handled = remote_button.handle_event(event)
 
                     if not handled:
+                        for _, button in wall_buttons:
+                            if button.handle_event(event):
+                                handled = True
+                                break
+
+                    if not handled:
                         handled = reset_button.handle_event(event)
 
                     if not handled:
@@ -313,7 +345,10 @@ def main(screen, font, clock):
                                 break
 
                     if not handled:
-                        world.select_agent_at(event.pos)
+                        if world.wall_mode_enabled:
+                            world.handle_wall_click(event.pos)
+                        else:
+                            world.select_agent_at(event.pos)
 
         keys = pygame.key.get_pressed()
         remote_x = int(keys[pygame.K_RIGHT]) - int(keys[pygame.K_LEFT])
@@ -330,7 +365,7 @@ def main(screen, font, clock):
         world.tick(dt)
 
         draw_elements(world, screen)
-        draw_ui(world, screen, font, formation_buttons, remote_button, reset_button, reset_steppers, graphics_checkboxes, ir_sliders)
+        draw_ui(world, screen, font, formation_buttons, remote_button, wall_buttons, reset_button, reset_steppers, graphics_checkboxes, ir_sliders)
 
         pygame.display.flip()
 
