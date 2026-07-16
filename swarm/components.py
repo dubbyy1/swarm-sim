@@ -1,4 +1,5 @@
 import math
+import random
 import pygame
 
 from .utils import Pose
@@ -158,8 +159,9 @@ class Radio:
 
 
 class Drivetrain:
-    def __init__(self, agent):
+    def __init__(self, agent, settings):
         self.agent = agent
+        self.settings = settings
         self.wheel_angles = [0, 120, 240]
         self.base_radius = agent.radius + 2
         self.wheel_diameter = 24
@@ -168,6 +170,8 @@ class Drivetrain:
         self.max_wheel_acceleration = agent.speed * 8
         self.target_wheel_speeds = [0.0, 0.0, 0.0]
         self.wheel_speeds = [0.0, 0.0, 0.0]
+        self.wheel_error_profile = [random.uniform(-1, 1) for _ in self.wheel_angles]
+        self.velocity = [0.0, 0.0, 0.0]
 
     def clamp(self, value, minimum, maximum):
         return max(minimum, min(maximum, value))
@@ -225,6 +229,9 @@ class Drivetrain:
         vx_body, vy_body = self.world_to_body(vx, vy)
         self.target_wheel_speeds = self.body_to_wheels(vx_body, vy_body, omega)
 
+    def set_desired_body_velocity(self, vx, vy, omega):
+        self.target_wheel_speeds = self.body_to_wheels(vx, vy, omega)
+
     def update_wheel_speeds(self, delta):
         max_change = self.max_wheel_acceleration * delta
 
@@ -237,12 +244,20 @@ class Drivetrain:
             )
             self.wheel_speeds[i] = current_speed + change
 
+    def get_effective_wheel_speeds(self):
+        inaccuracy = self.settings.wheel_inaccuracy
+        return [
+            speed * (1 + error * inaccuracy)
+            for speed, error in zip(self.wheel_speeds, self.wheel_error_profile)
+        ]
+
     def tick(self, delta):
         self.update_wheel_speeds(delta)
-        vx_body, vy_body, omega = self.wheels_to_body(self.wheel_speeds)
+        vx_body, vy_body, omega = self.wheels_to_body(self.get_effective_wheel_speeds())
         vx_world, vy_world = self.body_to_world(vx_body, vy_body)
+        self.velocity = [vx_world, vy_world, omega]
 
-        return [vx_world, vy_world, omega]
+        return self.velocity
 
     def get_wheel_global_pose(self, angle):
         heading = math.radians(self.agent.pose.theta)
@@ -277,8 +292,8 @@ class Drivetrain:
 
         return points
 
-    def draw(self, screen):
-        for angle, speed in zip(self.wheel_angles, self.wheel_speeds):
+    def draw(self, screen, show_wheel_speeds=True):
+        for angle, speed in zip(self.wheel_angles, self.get_effective_wheel_speeds()):
             wheel_pose = self.get_wheel_global_pose(angle)
             wheel_points = self.get_rotated_rect_points(
                 wheel_pose.x,
@@ -291,16 +306,16 @@ class Drivetrain:
             pygame.draw.polygon(screen, "#000000", wheel_points)
             # pygame.draw.polygon(screen, "#111111", wheel_points, 2)
 
-            drive_angle = math.radians(wheel_pose.theta)
-            speed_scale = 0 if self.max_wheel_speed == 0 else abs(speed**1.2) / self.max_wheel_speed
-            direction = 1 if speed >= 0 else -1
-            line_length = self.wheel_diameter * 0.5 * speed_scale
-            start = (wheel_pose.x, wheel_pose.y)
-            end = (
-                wheel_pose.x + math.cos(drive_angle) * (speed_scale*direction) * 12,
-                wheel_pose.y + math.sin(drive_angle) * (speed_scale*direction) * 12
-            )
-            if direction > 0:
-                pygame.draw.line(screen, "#ff0000", start, end, 3)
-            else:
-                pygame.draw.line(screen, "#00ffff", start, end, 3)
+            if show_wheel_speeds:
+                drive_angle = math.radians(wheel_pose.theta)
+                speed_scale = 0 if self.max_wheel_speed == 0 else abs(speed**1.2) / self.max_wheel_speed
+                direction = 1 if speed >= 0 else -1
+                start = (wheel_pose.x, wheel_pose.y)
+                end = (
+                    wheel_pose.x + math.cos(drive_angle) * (speed_scale*direction) * 12,
+                    wheel_pose.y + math.sin(drive_angle) * (speed_scale*direction) * 12
+                )
+                if direction > 0:
+                    pygame.draw.line(screen, "#ff0000", start, end, 3)
+                else:
+                    pygame.draw.line(screen, "#00ffff", start, end, 3)

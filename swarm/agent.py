@@ -8,46 +8,44 @@ from .types import Formation, State, Intent
 from .components import IREmitter, IRReceiver, UWBAntenna, Radio, Drivetrain
 
 class Agent:
-    def __init__(self, id, network, screen):
+    def __init__(self, id, network, screen, settings, emitter_count=3, receiver_count=16):
         self.id = id
         self.network = network
         self.screen = screen
+        self.settings = settings
 
         self.pose = Pose(0, 0, 0)
         self.radius = 20
         self.speed = 50
         self.emitter_radius = 2
-        self.emitters = self.spawn_emitters(3)
+        self.emitters = self.spawn_emitters(emitter_count)
         self.receiver_radius = 21
-        self.receivers = self.spawn_receivers(16)
+        self.receivers = self.spawn_receivers(receiver_count)
         self.antenna = UWBAntenna(self, self.network)
         self.radio = Radio(self, self.network)
-        self.drivetrain = Drivetrain(self)
+        self.drivetrain = Drivetrain(self, self.settings)
 
         self.map: dict[int, dict] = {}
         self.local_network = nx.Graph()
         self.local_network.add_node(self.id)
 
-        self.recency_window = 0.5
-        self.network_edge_window = 0.5
-        self.ir_top_k = 3
-        self.bearing_smoothing = 0.35
-        self.distance_smoothing = 0.35
-        self.pose_smoothing = 0.25
         self.pending_ir = {}
         self.pending_radio = []
         self.message_id = 0
+        self.remote_input_x = 0.0
+        self.remote_input_y = 0.0
+        self.last_excluded_neighbours = frozenset()
+        self.last_join_network_time = 0.0
 
         self.initialized = False
         self.leader = False
-        self.formation_controller = FormationController(self, screen)
-        self.formation = Formation.LINE
+        self.formation_controller = FormationController(self, screen, self.settings)
+        self.formation = Formation.IDLE
         self.state = State.IDLE
 
     def start(self):
         if self.get_live_neighbours():
             self.update_own_network_connections()
-            self.leader = True
             self.transmit_radio(self.form_radio(
                 intent=Intent.JOIN_NETWORK
             ))
@@ -91,12 +89,18 @@ class Agent:
     def tick(self, delta):
         self.read_ir(delta)
         self.read_radio(delta)
+        self.refresh_excluded_network_membership()
 
         desired_vx = 0
         desired_vy = 0
         desired_omega = 0
+        desired_velocity_is_world_frame = False
 
-        if self.state in (State.IN_FORMATION, State.EXCLUDED):
+        if self.state == State.REMOTE:
+            desired_vx = self.remote_input_x * self.speed
+            desired_vy = self.remote_input_y * self.speed
+            desired_velocity_is_world_frame = True
+        elif self.state in (State.IN_FORMATION, State.EXCLUDED):
             velocity = self.formation_controller.get_formation_velocity()
             desired_vx = velocity[0]
             desired_vy = velocity[1]
@@ -105,16 +109,75 @@ class Agent:
             desired_vx = velocity[0]
             desired_vy = velocity[1]
 
-        self.drivetrain.set_desired_world_velocity(
-            desired_vx,
-            desired_vy,
-            desired_omega
-        )
+        if desired_velocity_is_world_frame:
+            self.drivetrain.set_desired_world_velocity(
+                desired_vx,
+                desired_vy,
+                desired_omega
+            )
+        else:
+            self.drivetrain.set_desired_body_velocity(
+                desired_vx,
+                desired_vy,
+                desired_omega
+            )
         actual_vx, actual_vy, actual_omega = self.drivetrain.tick(delta)
 
         self.pose.x += actual_vx * delta
         self.pose.y += actual_vy * delta
         self.pose.theta = (self.pose.theta + math.degrees(actual_omega) * delta) % 360
+
+    def set_remote_input(self, x, y):
+        length = math.hypot(x, y)
+
+        if length == 0:
+            self.remote_input_x = 0.0
+            self.remote_input_y = 0.0
+            return
+
+        self.remote_input_x = x / length
+        self.remote_input_y = y / length
+
+    def enter_remote(self):
+        self.set_remote_input(0, 0)
+        self.state = State.REMOTE
+
+    def exit_remote(self):
+        if self.state != State.REMOTE:
+            return
+
+        self.set_remote_input(0, 0)
+
+        if self.formation == Formation.IDLE:
+            self.state = State.IDLE
+        elif self.id in self.formation_controller.order:
+            self.state = State.IN_FORMATION
+        else:
+            self.state = State.EXCLUDED
+
+    def refresh_excluded_network_membership(self):
+        if self.state != State.EXCLUDED:
+            self.last_excluded_neighbours = frozenset(self.get_live_neighbours())
+            return
+
+        live_neighbours = frozenset(self.get_live_neighbours())
+        if not live_neighbours:
+            self.last_excluded_neighbours = live_neighbours
+            return
+
+        if live_neighbours == self.last_excluded_neighbours:
+            return
+
+        current_time = time.time()
+        if current_time - self.last_join_network_time < self.settings.join_network_cooldown:
+            return
+
+        self.last_excluded_neighbours = live_neighbours
+        self.last_join_network_time = current_time
+        self.update_own_network_connections()
+        self.transmit_radio(self.form_radio(
+            intent=Intent.JOIN_NETWORK
+        ))
 
     def communicate(self):
         self.ping()
@@ -168,7 +231,6 @@ class Agent:
                 self.set_formation_order(order)
                 packet["state"] = self.state
                 packet["order"] = order
-                print(packet)
 
             case _:
                 pass
@@ -187,6 +249,10 @@ class Agent:
         for packet in messages:
             self.process_radio(packet)
 
+    def reset_local_network(self):
+        self.local_network = nx.Graph()
+        self.local_network.add_node(self.id)
+
     def update_network_edge(self, a, b, distance):
         current_time = time.time()
 
@@ -197,7 +263,7 @@ class Agent:
             edge = self.local_network.get_edge_data(a, b)
             edge_age = current_time - edge["timestamp"]
 
-            if edge_age <= self.network_edge_window:
+            if edge_age <= self.settings.network_edge_window:
                 existing_distance = edge["distance"]
                 distance = (existing_distance + distance) / 2
 
@@ -216,9 +282,6 @@ class Agent:
         if sender_id == self.id:
             return
 
-        if packet.get("intent") == Intent.JOIN_NETWORK:
-            self.leader = False
-
         match packet.get("intent"):
             case Intent.JOIN_NETWORK:
                 neighbours = packet.get("neighbours", [])
@@ -232,18 +295,28 @@ class Agent:
 
                 if self.id == next_agent or (next_agent == -1 and self.id not in live):
                     self.update_own_network_connections()
-                    self.leader = True
                     self.transmit_radio(self.form_radio(
                         intent=Intent.JOIN_NETWORK,
                         payload={"live": live}
                     ))
-            case Intent.SET_FORMATION:
-                self.set_formation(packet["formation"])
-                if self.leader:
-                    print(self.id, "LEADER")
+
+                if self.leader and self.formation != Formation.IDLE:
                     self.transmit_radio(self.form_radio(
                         intent=Intent.SET_FORMATION_ORDER
                     ))
+            case Intent.SET_FORMATION:
+                self.set_formation(packet["formation"])
+                if packet["formation"] != Formation.IDLE:
+                    self.reset_local_network()
+                    self.update_own_network_connections()
+
+                    if self.leader:
+                        self.transmit_radio(self.form_radio(
+                            intent=Intent.JOIN_NETWORK
+                        ))
+
+
+
             case Intent.SET_FORMATION_ORDER:
                 self.set_formation_order(packet.get("order", []))
             case _:
@@ -306,7 +379,7 @@ class Agent:
 
         for message_key, message in self.pending_ir.items():
             message["age"] += delta
-            if message["age"] >= self.recency_window:
+            if message["age"] >= self.settings.recency_window:
                 completed_messages.append(message_key)
 
         for message_key in completed_messages:
@@ -330,7 +403,7 @@ class Agent:
             entry["bearing"] = self.smooth_bearing(
                 entry["bearing"],
                 bearing,
-                self.bearing_smoothing
+                self.settings.bearing_smoothing
             )
 
         entry["ir_timestamp"] = time.time()
@@ -354,7 +427,7 @@ class Agent:
             entry["distance"] = self.smooth_value(
                 entry["distance"],
                 distance,
-                self.distance_smoothing
+                self.settings.distance_smoothing
             )
 
         entry["uwb_timestamp"] = time.time()
@@ -382,7 +455,7 @@ class Agent:
             if strength > 0
         ]
         readings.sort(key=lambda reading: reading[1], reverse=True)
-        readings = readings[:self.ir_top_k]
+        readings = readings[:self.settings.ir_top_k]
 
         total_strength = sum(strength for _, strength in readings)
         if total_strength == 0:
@@ -425,7 +498,7 @@ class Agent:
             entry["pose"] = target_pose
             return
 
-        alpha = self.pose_smoothing
+        alpha = self.settings.pose_smoothing
         x = current_pose.x + (target_pose.x - current_pose.x) * alpha
         y = current_pose.y + (target_pose.y - current_pose.y) * alpha
 
@@ -459,13 +532,21 @@ class Agent:
     def set_formation(self, formation):
         self.formation = formation
 
+        if formation == Formation.IDLE:
+            if self.state != State.REMOTE:
+                self.state = State.IDLE
+            self.formation_controller.order = tuple()
+            self.formation_controller.neighbours = tuple()
+
     def set_formation_order(self, order):
         if self.id not in order:
-            self.state = State.EXCLUDED
+            if self.state != State.REMOTE:
+                self.state = State.EXCLUDED
             self.formation_controller.neighbours = tuple()
             return
 
-        self.state = State.IN_FORMATION
+        if self.state != State.REMOTE:
+            self.state = State.IN_FORMATION
         index = order.index(self.id)
         neighbours = []
 
@@ -485,9 +566,11 @@ class Agent:
         self.formation_controller.order = tuple(order)
         self.formation_controller.neighbours = tuple(neighbours)
 
-    def draw(self, screen):
-        self.drivetrain.draw(screen)
-        pygame.draw.circle(screen, "#000000", (int(self.pose.x), int(self.pose.y)), self.radius, 2)
+    def draw(self, screen, selected=False):
+        self.drivetrain.draw(screen, show_wheel_speeds=self.settings.show_wheel_speeds)
+        outline_color = "#ff0000" if selected else "#000000"
+        outline_width = 4 if selected else 2
+        pygame.draw.circle(screen, outline_color, (int(self.pose.x), int(self.pose.y)), self.radius, outline_width)
 
         if self.id == -1:
             pygame.draw.circle(screen, "#ff00ff", (int(self.pose.x), int(self.pose.y)), self.radius, 2)
@@ -503,17 +586,19 @@ class Agent:
                 debug_y = self.pose.y + relative_pose.y
                 pygame.draw.circle(screen, "#ff00ff", (debug_x, debug_y), 4)
 
-        for emitter in self.emitters:
-            emitter.draw(screen)
-        for receiver in self.receivers:
-            receiver.draw(screen)
+        if self.settings.show_components:
+            for emitter in self.emitters:
+                emitter.draw(screen)
+            for receiver in self.receivers:
+                receiver.draw(screen)
         # self.antenna.draw(screen)
         # self.radio.draw(screen)
 
 class FormationController:
-    def __init__(self, agent, screen):
+    def __init__(self, agent, screen, settings):
         self.agent = agent
         self.screen = screen
+        self.settings = settings
         self.neighbours = tuple()
         self.order = tuple()
         self.min_neighbour_distance = self.agent.radius * 5
@@ -650,13 +735,19 @@ class FormationController:
                 case Formation.CIRCLE:
                     target = get_circle_position()
                 case _:
-                    return [0, 0]
+                    target = Pose(0, 0, 0)
 
         if target is None:
             return [0, 0]
 
-        global_target = Pose(target.x, target.y, target.theta) + self.agent.pose
-        pygame.draw.circle(self.screen, "#ff00ff", (int(global_target.x), int(global_target.y)), 3)
+        heading = math.radians(self.agent.pose.theta)
+        global_target = Pose(
+            self.agent.pose.x + target.x * math.cos(heading) - target.y * math.sin(heading),
+            self.agent.pose.y + target.x * math.sin(heading) + target.y * math.cos(heading),
+            self.agent.pose.theta + target.theta
+        )
+        if self.settings.show_target_positions:
+            pygame.draw.circle(self.screen, "#ff00ff", (int(global_target.x), int(global_target.y)), 3)
         target_distance = math.hypot(target.x, target.y)
         if target_distance == 0:
             velocity = [0, 0]
@@ -773,7 +864,6 @@ class FormationController:
             return []
 
         cycles.sort(key=get_cycle_length)
-        print(cycles[0], "yo")
 
         return cycles[0]
 
@@ -803,7 +893,6 @@ class FormationController:
 
         paths = list(filter(lambda x: len(x) == longest, paths))
         paths.sort(key=get_path_length)
-        print(paths[0], "yo")
 
         return paths[0]
 

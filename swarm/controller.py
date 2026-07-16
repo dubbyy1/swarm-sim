@@ -1,4 +1,4 @@
-from .types import Intent
+from .types import Formation, Intent
 from .components import IREmitter
 
 class Controller:
@@ -7,6 +7,7 @@ class Controller:
         self.network = network
 
         self.message_id = 0
+        self.formation = Formation.IDLE
         self.emitter = IREmitter(self, self.network, 0)
 
     def form_packet(self):

@@ -1,9 +1,12 @@
 import math
+import random
 
 class Network:
-    def __init__(self, world, screen):
+    def __init__(self, world, screen, settings):
         self.world = world
         self.screen = screen
+        self.settings = settings
+        self.ir_intensity_dropoff = 100.0
 
     def broadcast_radio(self, packet):
         sender_id = packet.get("sender_id")
@@ -23,7 +26,8 @@ class Network:
 
             receiver_pose = agent.antenna.get_global_pose()
             distance = sender_pose.distance_to(receiver_pose)
-            agent.antenna.receive(packet, distance)
+            noisy_distance = max(0, distance + random.gauss(0, self.settings.uwb_distance_noise))
+            agent.antenna.receive(packet, noisy_distance)
 
     def broadcast_ir(self, sender_pose, packet, cone_width, sglobal):
         _, sender_id, message_id, emitter_id, _ = packet
@@ -33,13 +37,18 @@ class Network:
             for receiver in agent.receivers:
                 receiver_pose = receiver.get_global_pose()
 
+                distance = sender_pose.distance_to(receiver_pose)
+                if distance > self.settings.ir_max_range:
+                    continue
+
                 if not self.receiver_is_in_cone(sender_pose, receiver_pose, cone_width):
                     continue
                 if self.signal_is_blocked(sender_pose, receiver_pose, sender_id, agent.id):
                     continue
 
-                strength = self.get_signal_strength(sender_pose, receiver_pose)
-                receiver.receive(packet, strength)
+                strength = self.get_signal_strength(distance)
+                noisy_strength = max(0, min(1, strength + random.gauss(0, self.settings.ir_noise)))
+                receiver.receive(packet, noisy_strength)
 
 
     def receiver_is_in_cone(self, sender_pose, receiver_pose, cone_width):
@@ -48,10 +57,8 @@ class Network:
 
         return angle_offset <= cone_width / 2
 
-    def get_signal_strength(self, sender_pose, receiver_pose):
-        distance = sender_pose.distance_to(receiver_pose)
-
-        return 1 / (1 + distance / 100)
+    def get_signal_strength(self, distance):
+        return 1 / (1 + distance / self.ir_intensity_dropoff)
 
     def signal_is_blocked(self, sender_pose, receiver_pose, sender_id, receiver_agent_id):
         for agent in self.world.agents:
