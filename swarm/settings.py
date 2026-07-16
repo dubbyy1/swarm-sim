@@ -31,3 +31,6 @@ class Settings:
     distance_smoothing: float = 0.35
     pose_smoothing: float = 0.25
     join_network_cooldown: float = 0.5
+    network_report_min_delay: float = 0.0
+    network_report_max_delay: float = 0.25
+    formation_order_collection_delay: float = 0.35

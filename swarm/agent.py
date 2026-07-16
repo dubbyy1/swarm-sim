@@ -1,5 +1,6 @@
 import pygame
 import math
+import random
 import time
 import networkx as nx
 
@@ -36,6 +37,8 @@ class Agent:
         self.remote_input_y = 0.0
         self.last_excluded_neighbours = frozenset()
         self.last_join_network_time = 0.0
+        self.pending_network_report_time: float | None = None
+        self.pending_formation_order_time: float | None = None
 
         self.initialized = False
         self.leader = False
@@ -46,9 +49,7 @@ class Agent:
     def start(self):
         if self.get_live_neighbours():
             self.update_own_network_connections()
-            self.transmit_radio(self.form_radio(
-                intent=Intent.JOIN_NETWORK
-            ))
+            self.schedule_network_report()
             self.initialized = True
 
     ### COMPONENTS
@@ -90,6 +91,7 @@ class Agent:
         self.read_ir(delta)
         self.read_radio(delta)
         self.refresh_excluded_network_membership()
+        self.process_scheduled_network_tasks()
 
         desired_vx = 0
         desired_vy = 0
@@ -175,9 +177,59 @@ class Agent:
         self.last_excluded_neighbours = live_neighbours
         self.last_join_network_time = current_time
         self.update_own_network_connections()
-        self.transmit_radio(self.form_radio(
-            intent=Intent.JOIN_NETWORK
-        ))
+        self.schedule_network_report()
+        self.schedule_formation_order()
+
+    def schedule_network_report(self):
+        delay = random.uniform(
+            self.settings.network_report_min_delay,
+            self.settings.network_report_max_delay
+        )
+        scheduled_time = time.time() + delay
+
+        if self.pending_network_report_time is None:
+            self.pending_network_report_time = scheduled_time
+        else:
+            self.pending_network_report_time = min(
+                self.pending_network_report_time,
+                scheduled_time
+            )
+
+    def schedule_formation_order(self):
+        if not self.leader or self.formation == Formation.IDLE:
+            return
+
+        scheduled_time = time.time() + self.settings.formation_order_collection_delay
+        if self.pending_formation_order_time is None:
+            self.pending_formation_order_time = scheduled_time
+        else:
+            self.pending_formation_order_time = max(
+                self.pending_formation_order_time,
+                scheduled_time
+            )
+
+    def process_scheduled_network_tasks(self):
+        current_time = time.time()
+
+        if (
+            self.pending_network_report_time is not None
+            and current_time >= self.pending_network_report_time
+        ):
+            self.pending_network_report_time = None
+            self.update_own_network_connections()
+            self.transmit_radio(self.form_radio(
+                intent=Intent.JOIN_NETWORK
+            ))
+            self.schedule_formation_order()
+
+        if (
+            self.pending_formation_order_time is not None
+            and current_time >= self.pending_formation_order_time
+        ):
+            self.pending_formation_order_time = None
+            self.transmit_radio(self.form_radio(
+                intent=Intent.SET_FORMATION_ORDER
+            ))
 
     def communicate(self):
         self.ping()
@@ -207,21 +259,8 @@ class Agent:
                 packet["intent"] = Intent.JOIN_NETWORK
 
                 neighbours = self.get_live_neighbours()
-                live = list(payload.get("live", [])) if payload else []
-
-                if self.id not in live:
-                    live.append(self.id)
-
-                next_agent = -1
-                for neighbour_id in neighbours:
-                    if neighbour_id not in live:
-                        next_agent = neighbour_id
-                        break
-
                 packet["neighbours"] = neighbours
                 packet["distances"] = [self.get_agent_distance(neighbour_id) for neighbour_id in neighbours]
-                packet["live"] = live
-                packet["next"] = next_agent
 
             case Intent.SET_FORMATION_ORDER:
                 packet["intent"] = Intent.SET_FORMATION_ORDER
@@ -290,30 +329,15 @@ class Agent:
                 for neighbour_id, distance in zip(neighbours, distances):
                     self.update_network_edge(sender_id, neighbour_id, distance)
 
-                live = packet.get("live", [])
-                next_agent = packet.get("next", -1)
-
-                if self.id == next_agent or (next_agent == -1 and self.id not in live):
-                    self.update_own_network_connections()
-                    self.transmit_radio(self.form_radio(
-                        intent=Intent.JOIN_NETWORK,
-                        payload={"live": live}
-                    ))
-
-                if self.leader and self.formation != Formation.IDLE:
-                    self.transmit_radio(self.form_radio(
-                        intent=Intent.SET_FORMATION_ORDER
-                    ))
+                self.schedule_formation_order()
             case Intent.SET_FORMATION:
                 self.set_formation(packet["formation"])
                 if packet["formation"] != Formation.IDLE:
                     self.reset_local_network()
                     self.update_own_network_connections()
 
-                    if self.leader:
-                        self.transmit_radio(self.form_radio(
-                            intent=Intent.JOIN_NETWORK
-                        ))
+                    self.schedule_network_report()
+                    self.schedule_formation_order()
 
 
 
