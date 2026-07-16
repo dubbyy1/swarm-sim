@@ -1,6 +1,8 @@
 # SwarmSim
 A 2D Python simulation of a decentralized robot swarm. Robots use IR and UWB for direction to and distance from each other respectively. All other communication is done over WiFi.
 
+![Imgae](/img/swarm-sim.png)
+
 ## Features
 **Formations:** Robots can form circles and lines, or idle and maintain a minimum distance from their neighbours.
 **Signals:** Simulated infrared and Ultra-Wideband signals. IR signals can be blocked by robots or walls. Robots broadcast their IDs over IR and compare signal strengths across their receivers to determine the angle of origin. A simple UWB implementation allows them to broadcast their IDs and determine the precise distance to each other.
