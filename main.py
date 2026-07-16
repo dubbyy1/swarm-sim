@@ -252,7 +252,6 @@ def draw_selected_robot_stats(world, screen, font):
             f"Formation: {agent.formation.name}",
             f"Live neighbours: {live_neighbours}",
             f"Velocity: ({vx:.1f}, {vy:.1f})",
-            f"Is leader: {agent.leader}",
         ]
 
     rendered_lines = [font.render(line, True, "#000000") for line in lines]
