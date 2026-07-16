@@ -586,6 +586,10 @@ class Agent:
                 debug_y = self.pose.y + relative_pose.y
                 pygame.draw.circle(screen, "#ff00ff", (debug_x, debug_y), 4)
 
+        if selected and self.settings.show_emitter_cones:
+            for emitter in self.emitters:
+                emitter.draw_cone(screen)
+
         if self.settings.show_components:
             for emitter in self.emitters:
                 emitter.draw(screen)

@@ -178,6 +178,13 @@ def create_graphics_checkboxes(world):
             lambda: world.settings.show_ir_range_circle,
             lambda checked: setattr(world.settings, "show_ir_range_circle", checked)
         ),
+        Checkbox(
+            12,
+            264,
+            "Emitter cones",
+            lambda: world.settings.show_emitter_cones,
+            lambda checked: setattr(world.settings, "show_emitter_cones", checked)
+        ),
     ]
 
 
@@ -185,7 +192,7 @@ def create_ir_sliders(world):
     return [
         Slider(
             12,
-            276,
+            306,
             220,
             "IR max range",
             50,
@@ -196,7 +203,7 @@ def create_ir_sliders(world):
         ),
         Slider(
             12,
-            326,
+            356,
             220,
             "IR noise",
             0,
@@ -207,7 +214,7 @@ def create_ir_sliders(world):
         ),
         Slider(
             12,
-            376,
+            406,
             220,
             "UWB noise",
             0,
@@ -218,7 +225,7 @@ def create_ir_sliders(world):
         ),
         Slider(
             12,
-            426,
+            456,
             220,
             "Wheel inaccuracy",
             0,

@@ -77,28 +77,30 @@ class IREmitter:
         theta = (self.agent.pose.theta + self.pose.theta) % 360
         return Pose(x, y, theta)
 
+    def draw_cone(self, screen):
+        global_pose = self.get_global_pose()
+        theta = math.radians(global_pose.theta)
+        half_cone = math.radians(self.cone_width / 2)
+        cone_length = self.agent.settings.ir_max_range
+        cone_points = [
+            (global_pose.x, global_pose.y),
+            (
+                global_pose.x + cone_length * math.cos(theta + half_cone),
+                global_pose.y + cone_length * math.sin(theta + half_cone),
+            ),
+            (
+                global_pose.x + cone_length * math.cos(theta - half_cone),
+                global_pose.y + cone_length * math.sin(theta - half_cone),
+            ),
+        ]
+
+        cone_surface = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+        pygame.draw.polygon(cone_surface, (255, 0, 0, 35), cone_points)
+        screen.blit(cone_surface, (0, 0))
+
     def draw(self, screen):
         global_pose = self.get_global_pose()
         pygame.draw.circle(screen, (255, 0, 0), (global_pose.x, global_pose.y), 2.5)
-
-        # theta = math.radians(global_pose.theta)
-        # half_cone = math.radians(self.cone_width / 2)
-        # cone_length = 500
-        # cone_points = [
-        #     (global_pose.x, global_pose.y),
-        #     (
-        #         global_pose.x + cone_length * math.cos(theta + half_cone),
-        #         global_pose.y + cone_length * math.sin(theta + half_cone),
-        #     ),
-        #     (
-        #         global_pose.x + cone_length * math.cos(theta - half_cone),
-        #         global_pose.y + cone_length * math.sin(theta - half_cone),
-        #     ),
-        # ]
-
-        # cone_surface = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
-        # pygame.draw.polygon(cone_surface, (255, 0, 0, 10), cone_points)
-        # screen.blit(cone_surface, (0, 0))
 
 class UWBAntenna:
     def __init__(self, agent, network):

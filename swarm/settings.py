@@ -16,6 +16,7 @@ class Settings:
     show_wheel_speeds: bool = True
     show_target_positions: bool = True
     show_ir_range_circle: bool = True
+    show_emitter_cones: bool = True
 
     ir_max_range: float = 400.0
     ir_noise: float = 0.0
