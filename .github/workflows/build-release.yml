@@ -83,12 +83,13 @@ jobs:
       - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          files=$(find artifacts -name '*.zip' -type f)
+          mapfile -t files < <(find artifacts -name '*.zip' -type f)
 
-          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            gh release upload "$TAG_NAME" $files --clobber
+          if gh release view "$TAG_NAME" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" "${files[@]}" --repo "$GH_REPO" --clobber
           else
-            gh release create "$TAG_NAME" $files --title "$TAG_NAME" --notes "Automated release build for $TAG_NAME."
+            gh release create "$TAG_NAME" "${files[@]}" --repo "$GH_REPO" --title "$TAG_NAME" --notes "Automated release build for $TAG_NAME."
           fi
